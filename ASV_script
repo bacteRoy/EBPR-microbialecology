@@ -1,0 +1,83 @@
+#Packages and libraries to install 
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("dada2", version = "3.8")
+library(BiocManager); packageVersion("BiocManager")
+library(dada2); packageVersion("dada2")
+
+#Create a samples list in the same directory as all samples by running a bash script:
+ls *_R1.fastq.gz | cut -f1 -d "_" > samples
+
+#The rest of the code can be implemented in R
+#Check the quality of sequences with plotQualityProfile
+samples <- scan("samples", what="character") 
+forward_reads <- paste0(samples, "_R1.fastq.gz")
+reverse_reads <- paste0(samples, "_R2.fastq.gz")
+any(duplicated(c(forward_reads, reverse_reads)))
+plotQualityProfile(forward_reads)
+plotQualityProfile(reverse_reads)
+
+#Filtering reads to keep good quality sequences above Phred score 20 
+#There are a few options to try here, refer to guide before choosing parameters
+filt_forward_reads <- paste0(samples, "_R1_filt.fastq.gz")
+filt_reverse_reads <- paste0(samples, "_R2_filt.fastq.gz")
+filtered_out <- filterAndTrim(forward_reads, filt_forward_reads, reverse_reads_Aal, filt_reverse_reads_Aal, truncLen=c(290,260),maxN=0, maxEE=c(5,6), truncQ=2, rm.phix=TRUE, compress=TRUE, multithread=TRUE)
+plotQualityProfile(filt_forward_reads)
+plotQualityProfile(filt_reverse_reads)
+
+#Learning error rates from sequences
+Err_Forward_reads <- learnErrors(filt_forward_reads, multithread = TRUE)
+plotErrors(Err_Forward_reads, nominalQ = TRUE)
+Err_Reverse_reads <- learnErrors(filt_reverse_reads, multithread = TRUE)
+plotErrors(Err_Reverse_reads, nominalQ = TRUE)  
+
+#Deionizing reads
+derep_forward <- derepFastq(filt_forward_reads, verbose=TRUE)
+names(derep_forward) <- samples 
+derep_reverse <- derepFastq(filt_reverse_reads, verbose=TRUE)
+names(derep_reverse) <- samples
+dada_forward <- dada(derep_forward, err=Err_Forward_reads, multithread = TRUE, pool="pseudo") 
+dada_reverse <- dada(derep_reverse, err=Err_Reverse_reads, multithread = TRUE, pool="pseudo")
+
+#Merging amplicons; there are a few options to try here, refer to guide before choosing parameters
+merged_amplicons <- mergePairs(dada_forward_Aal, derep_forward_Aal, dada_reverse_Aal, derep_reverse_Aal, trimOverhang=TRUE)
+head(merged_amplicons)
+
+#Making sequence table
+seqtab <- makeSequenceTable(merged_amplicons)
+class(seqtab)
+dim(seqtab)
+seqtab.nochim <- removeBimeraDenovo(seqtab_Aal, method = "consensus", verbose=T, multithread = FALSE)
+sum(seqtab.nochim)/sum(seqtab)
+getN <- function(x) sum(getUniques(x))
+summary_tab <- data.frame(row.names=samples, dada2_input=filtered_out[,1],filtered=filtered_out[,2], dada_f=sapply(dada_forward, getN),dada_r=sapply(dada_reverse, getN), merged=sapply(merged_amplicons, getN),nonchim=rowSums(seqtab.nochim), final_perc_reads_retained=round(rowSums(seqtab.nochim)/filtered_out[,1]*100, 1))
+summary_tab
+write.table(summary_tab, "summary_tab.tsv", sep = "\t", quote = F, col.names = NA)
+
+#Taxa Table using SILVA
+Taxa_Table_Aal <- assignTaxonomy(seqtab.nochim, "~/Documents/16S_data_analysis/dada2_trial1/T_Aug21/RA/silva_nr_v132_train_set.fa.gz", multithread = TRUE, verbose = TRUE)
+
+#Alternatively, can also try adding species and using the MiDAS database in addition to the SILVA one:
+Taxa_Table_Species_RARC <- addSpecies(Taxa_Table,"~/Documents/16S_data_analysis/dada2_trial1/T_Aug21/RA/silva_species_assignment_v132.fa.gz", verbose = TRUE)
+
+#Obtaining ASV sequences, count and taxonomy table
+asv_seqs <- colnames(seqtab.nochim)
+asv_headers <- vector(dim(seqtab.nochim)[2], mode="character")
+for (i in 1:dim(seqtab.nochim)[2]) {
+  asv_headers[i] <- paste(">ASV", i, sep = "_")
+}
+
+#Obtaining ASV sequences
+asv_fasta <- c(rbind(asv_headers, asv_seqs))
+write(asv_fasta, "ASV_fasta")
+
+#Obtaining Count table
+asv_tab <- t(seqtab.nochim)
+row.names(asv_tab) <- sub(">", "", asv_headers)
+write.table(asv_tab, "ASV_counts_Aal.tsv", sep = "\t", quote = F, col.names = NA)
+
+# Obtaining count table with taxa
+asv_tax <- Taxa_Table_Aal
+row.names(asv_tax) <- sub(">", "", asv_headers)
+write.table(asv_tax, "ASV_taxonomy_Aal.tsv", sep = "\t", quote = F, col.names = NA)
+
