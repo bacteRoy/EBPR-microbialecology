@@ -1,0 +1,111 @@
+# This workflow utilizes the ASV sequences, taxa and count table generated from the ASV script
+# First the count table us filtered to remove low abundance sequences that can create noise and then transform abundance to uniform depth
+# This is an ordinations flow sheet uses set of data from RA & RC SCELSE-sequenced run using Phyloseq and vegan
+# The plots generated from these codes are: 1. heatmap 2. NMDS
+
+#Libraries required in this workflow
+library(BiocManager); packageVersion("BiocManager")
+library(dada2); packageVersion("dada2")
+library(phyloseq); packageVersion("phyloseq")
+library(Biostrings); packageVersion("Biostrings")
+library(ggplot2); packageVersion("ggplot2")
+library(dplyr); packageVersion("dplyr")
+library(tidyr); packageVersion("tidyr")
+library(dendextend); packageVersion("dendextend")
+library(vegan); packageVersion("vegan")
+library(plotly); packageVersion("plotly")
+library(RColorBrewer); packageVersion("RColorBrewer")
+
+#Re-reading the count, taxa and sample info for RA & RC SCELSE-sequenced run into this session
+count_tab_sc <- read.table("~/ASV_counts_RARC.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
+taxa_tab_sc <- as.matrix(read.table("~/ASV_taxonomy_RARC.tsv", header = T, row.names = 1, check.names = F, sep = "\t"))
+taxa_tab_sc <- t(na_locf(t(taxa_tab_sc)))
+sample_info_sc <- read.table("~/Metadata_RARC_ScelseSeq.txt", header = T, row.names = 1, check.names = F, sep = "\t")
+
+#Making phyloseq object to plot bar charts and heatmaps 
+count_tab_pysq <- otu_table(count_tab_sc, taxa_are_rows = T)
+sample_info_pysq <- sample_data(sample_info_sc)
+taxa_pysq <- tax_table(taxa_tab_sc)
+ASV_pysq <- phyloseq(count_tab_pysq, taxa_pysq, sample_info_pysq)
+
+#Aggregate all counts for similar Genus
+#Make second phyloseq object with aggregated OTU table at Genus level
+otu_tab_genus <- otu_table(tax_glom(ASV_pysq, taxrank = "Genus"))
+genus_vec <- as.vector(tax_table(tax_glom(ASV_pysq, taxrank = "Genus"))[,6])
+row.names(otu_tab_genus) <- as.vector(genus_vec)
+genus_tax_tab_sc <- tax_table(tax_glom(taxa_pysq, taxrank = "Genus"))
+genus_vec_tax_tab <- as.vector(tax_glom(taxa_pysq, taxrank = "Genus")[,6])
+row.names(genus_tax_tab_sc) <- as.character(genus_vec_tax_tab)
+genus_glom_pysq <- phyloseq(otu_tab_genus, genus_tax_tab_sc, sample_info_pysq)
+
+write.csv(otu_tab_genus, "/OTU_tab_genus.txt")
+write.csv(genus_tax_tab_sc, "/Genus_taxa_tab.txt")
+
+#Transforming counts to get relative abundance:
+#Phyloseq object at ASV level
+transformed_ASV_pysq <- transform_sample_counts(ASV_pysq, function(x) x*100 / sum(x))
+str(transformed_ASV_pysq)
+#Phyloseq object agglomerated at genus level
+genus_transformed_pysq <- transform_sample_counts(genus_glom_pysq, function(x) x*100 / sum(x))
+str(genus_transformed_pysq)
+
+#Abundance filtering: keep only ASV/Genus-level reads with relative abundance > 0.2 in samples
+#At ASV level
+ASV_filter_taxa <- filter_taxa(genus_transformed_ASV_pysq, function(x) mean(x) > 0.02, T)
+ntaxa(ASV_filter_taxa)
+#At genus level
+genus_filter_taxa <- filter_taxa(genus_transformed_glom_pysq, function(x) mean(x) > 0.02, T)
+ntaxa(genus_filter_taxa)
+
+#Plot heatmap
+#At ASV level
+genus_trans_heatmap_1 <- plot_heatmap(ASV_filter_taxa, method = NULL, distance = NULL, taxa.label = "Genus", trans=NULL, low="beige", high="red") +
+  theme(axis.text.x = element_text(angle = 70, vjust=0.8, hjust=0.8), axis.title.x = element_text(size = 16, margin = margin(t=10)), axis.title.y = element_text(size = 16, vjust=0.5, hjust=0.1), legend.position = "right", panel.background = element_rect(fill = "white", colour = "black")) + 
+  labs(x="Sample", y="Genus (%)") +
+  coord_fixed(1)
+genus_trans_heatmap_1
+ht1_plotly <- ggplotly(genus_trans_heatmap_1)
+ht1_plotly
+ggsave("Heatmap_ASV_level.pdf", plot = genus_trans_heatmap_1)
+
+#At genus level
+genus_trans_heatmap_2 <- plot_heatmap(genus_filter_taxa, method = NULL, distance = NULL, taxa.label = "Genus", trans=NULL, low="beige", high="red") +
+  theme(axis.text.x = element_text(angle = 70, vjust=0.8, hjust=0.8), axis.title.x = element_text(size = 16, margin = margin(t=10)), axis.title.y = element_text(size = 16), legend.position = "right", panel.background = element_rect(fill = "white", colour = "black")) + 
+  labs(x="Sample", y="Genus (%)") +
+  coord_fixed(1)
+genus_trans_heatmap_2
+ht2_plotly <- ggplotly(genus_trans_heatmap_2)
+ht2_plotly
+ggsave("Heatmap at ASV level", plot = genus_trans_heatmap_1)
+
+#Perfoming ordination on the phyloseq data at OTU level
+#Using bray-dissimilarity
+ASV_ordinate_bc <- ordinate(ASV_pysq, "NMDS", "bray")
+p_bray <- plot_ordination(ASV_pysq, ASV_ordinate_bc, type="samples", color="EA", title="NMDS at ASV level differentiated by electron acceptor + BC dissimilarity")
+p_bray
+#Using jaccard distance
+ASV_ordinate_jaccard <- ordinate(ASV_pysq, "NMDS", "jaccard")
+p_jaccard <- plot_ordination(ASV_pysq, ASV_ordinate_jaccard, type="samples", color="EA", title="NMDS at ASV level differentiated by electron acceptor + Jaccard distance")
+p_jaccard
+
+#Plot ordinations
+head(sample_info_sc)
+genus_bray_1 <- plot_ordination(genus_glom_pysq, Genus_ordinate_bray, type="samples", color="EA", label = "Day", title="NMDS at genus level + BC") 
+genus_bray_1
+genus_bray_1 + geom_polygon(aes(fill="EA")) + geom_point(size=5) 
+
+genus_bray_2 <- plot_ordination(genus_glom_pysq, Genus_ordinate_bray, type="split", color="Phylum", shape = "EA", label = "Day", title="NMDS at genus level + BC")
+genus_bray_2
+gg_color_hue <- function(n){
+  hues = seq(15, 375, length=n+1)
+  hcl(h=hues, l=65, c=100)[1:n]
+}
+color.names <- levels(genus_bray_5$data$Phylum)
+gg_cols <- gg_color_hue(length(color.names))
+names(gg_cols) <- color.names
+gg_cols["Samples"] <- "black"
+genus_bray_2 + scale_color_manual(values = gg_cols)
+
+sample_data(genus_glom_pysq2) <- sample_data(genus_glom_pysq)[,c("SampleType", "Day")]
+genus_bray_samples <- plot_ordination(genus_glom_pysq, Genus_ordinate_bray, type="samples", color="EA", title="NMDS at genus level differentiated by electron acceptor + BC")
+genus_bray_samples
