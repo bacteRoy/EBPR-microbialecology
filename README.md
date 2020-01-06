@@ -1,1 +1,2 @@
-# EBPR-microbialecology
+# EBPR-MicrobialEcology
+This workflow demonstrates how to process high-throughput amplicon sequencing data from an EBPR enrichment and utilize the processed read counts for ecological analysis. The workflow implements dada2 pipeline to identify single nucleotide-resolved amplicon sequence variants or ASVs. The raw reads are first trimmed, then a parametric error model calculates the errors within the samples to infer fully deionised sequences and construct a count table with taxonomy.
